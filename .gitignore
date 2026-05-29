@@ -20,6 +20,8 @@ ios/Runner/Assets.xcassets/AppIcon.appiconsc
 *.log
 firebase-debug.log*
 database-debug.log*
+# WARNING: google-services.json contains sensitive Firebase credentials
+android/app/google-services.json
 
 # Environment (secrets)
 .env
