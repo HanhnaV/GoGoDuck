@@ -35,8 +35,6 @@ class _GameScreenState extends State<GameScreen> {
   int _timeLeft = 30;
   bool _isLoading = false;
   String? _errorMessage;
-
-  int? _selectedDuck;
   final _amountController = TextEditingController(text: '100');
 
   @override
@@ -61,15 +59,16 @@ class _GameScreenState extends State<GameScreen> {
       final status = data['status'] as String? ?? 'idle';
       final timeLeft = data['time_left'] as int? ?? 30;
 
+      // ignore: avoid_print
+      print('[GAME_SCREEN] Race status changed -> status: "$status", timeLeft: $timeLeft');
+
       setState(() {
         _timeLeft = timeLeft;
         if (status == 'betting') {
           _raceState = RaceState.betting;
-          _selectedDuck = null;
           _startDuckListener();
         } else if (status == 'racing') {
           _raceState = RaceState.racing;
-          _selectedDuck = null;
           _startDuckListener();
         } else if (status == 'finished') {
           _raceState = RaceState.finished;
@@ -123,7 +122,6 @@ class _GameScreenState extends State<GameScreen> {
           _isLoading = false;
           _p1 = _p2 = _p3 = _p4 = _p5 = 0.0;
           _winningDuck = 0;
-          _selectedDuck = null;
         });
       }
     } catch (e) {
@@ -137,16 +135,36 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   void _placeBet() {
-    if (_selectedDuck == null) {
+    final bettingState = context.read<BettingBloc>().state;
+    int? selectedDuck;
+    int? amount;
+
+    if (bettingState is BettingInitial) {
+      selectedDuck = bettingState.selectedDuck;
+      amount = bettingState.betAmount ?? int.tryParse(_amountController.text.trim());
+    } else if (bettingState is BettingLoading) {
+      selectedDuck = bettingState.selectedDuck;
+      amount = bettingState.betAmount;
+    } else if (bettingState is BettingFailure) {
+      selectedDuck = bettingState.selectedDuck;
+      amount = bettingState.betAmount ?? int.tryParse(_amountController.text.trim());
+    }
+
+    // ignore: avoid_print
+    print('[GAME_SCREEN] _placeBet - selectedDuck: $selectedDuck, amount: $amount');
+
+    if (selectedDuck == null) {
+      // ignore: avoid_print
+      print('[GAME_SCREEN] FAIL: No duck selected');
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Vui lòng chọn một con vịt!')),
       );
       return;
     }
 
-    final amountText = _amountController.text.trim();
-    final amount = int.tryParse(amountText);
     if (amount == null || amount <= 0) {
+      // ignore: avoid_print
+      print('[GAME_SCREEN] FAIL: Invalid amount');
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Vui lòng nhập số tiền hợp lệ!')),
       );
@@ -154,17 +172,26 @@ class _GameScreenState extends State<GameScreen> {
     }
 
     final authState = context.read<AuthBloc>().state;
+    // ignore: avoid_print
+    print('[GAME_SCREEN] AuthState type: ${authState.runtimeType}');
+
     if (authState is! AuthAuthenticated) {
+      // ignore: avoid_print
+      print('[GAME_SCREEN] FAIL: Not authenticated');
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Chưa đăng nhập!')),
       );
       return;
     }
 
+    final uid = authState.user.uid;
+    // ignore: avoid_print
+    print('[GAME_SCREEN] User uid: $uid, submitting bet...');
+
     context.read<BettingBloc>().add(SubmitBetEvent(
-      uid: authState.user.uid,
+      uid: uid,
       raceId: _raceId,
-      duckIndex: _selectedDuck!,
+      duckIndex: selectedDuck,
       amount: amount,
     ));
   }
@@ -200,7 +227,6 @@ class _GameScreenState extends State<GameScreen> {
           _p1 = _p2 = _p3 = _p4 = _p5 = 0.0;
           _winningDuck = 0;
           _timeLeft = 30;
-          _selectedDuck = null;
         });
       }
     } catch (e) {
@@ -369,95 +395,111 @@ class _GameScreenState extends State<GameScreen> {
     return Container(
       color: Colors.grey.shade900,
       padding: const EdgeInsets.all(16),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Text(
-            'Chọn vịt bạn tin sẽ thắng!',
-            style: TextStyle(color: Colors.white70, fontSize: 14),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: List.generate(5, (index) {
-              final duckNum = index + 1;
-              final isSelected = _selectedDuck == duckNum;
-              return GestureDetector(
-                onTap: () => setState(() => _selectedDuck = duckNum),
-                child: Column(
-                  children: [
-                    Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: duckColors[index],
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: isSelected ? Colors.white : Colors.transparent,
-                          width: 3,
-                        ),
-                        boxShadow: isSelected
-                            ? [BoxShadow(color: duckColors[index], blurRadius: 12)]
-                            : null,
-                      ),
-                      child: Center(
-                        child: Text(
-                          '$duckNum',
-                          style: const TextStyle(
-                            color: Colors.black87,
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Vịt $duckNum',
-                      style: TextStyle(
-                        color: isSelected ? Colors.white : Colors.white54,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            }),
-          ),
-          const SizedBox(height: 16),
-          Row(
+      child: BlocBuilder<BettingBloc, BettingState>(
+        builder: (context, state) {
+          final selectedDuck = state is BettingInitial
+              ? state.selectedDuck
+              : state is BettingLoading
+                  ? state.selectedDuck
+                  : state is BettingFailure
+                      ? state.selectedDuck
+                      : null;
+
+          return Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
               const Text(
-                'Tiền cược: ',
+                'Chọn vịt bạn tin sẽ thắng!',
                 style: TextStyle(color: Colors.white70, fontSize: 14),
               ),
-              Expanded(
-                child: TextField(
-                  controller: _amountController,
-                  keyboardType: TextInputType.number,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: InputDecoration(
-                    hintText: 'Nhập số tiền',
-                    hintStyle: const TextStyle(color: Colors.white38),
-                    filled: true,
-                    fillColor: Colors.white12,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide.none,
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: List.generate(5, (index) {
+                  final duckNum = index + 1;
+                  final isSelected = selectedDuck == duckNum;
+                  return GestureDetector(
+                    onTap: () {
+                      context.read<BettingBloc>().add(SelectDuckEvent(duckNum));
+                    },
+                    child: Column(
+                      children: [
+                        Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: duckColors[index],
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: isSelected ? Colors.white : Colors.transparent,
+                              width: 3,
+                            ),
+                            boxShadow: isSelected
+                                ? [BoxShadow(color: duckColors[index], blurRadius: 12)]
+                                : null,
+                          ),
+                          child: Center(
+                            child: Text(
+                              '$duckNum',
+                              style: const TextStyle(
+                                color: Colors.black87,
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Vịt $duckNum',
+                          style: TextStyle(
+                            color: isSelected ? Colors.white : Colors.white54,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
                     ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
+                  );
+                }),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  const Text(
+                    'Tiền cược: ',
+                    style: TextStyle(color: Colors.white70, fontSize: 14),
+                  ),
+                  Expanded(
+                    child: TextField(
+                      controller: _amountController,
+                      keyboardType: TextInputType.number,
+                      style: const TextStyle(color: Colors.white),
+                      onChanged: (val) {
+                        final amount = int.tryParse(val);
+                        if (amount != null) {
+                          context.read<BettingBloc>().add(UpdateAmountEvent(amount));
+                        }
+                      },
+                      decoration: InputDecoration(
+                        hintText: 'Nhập số tiền',
+                        hintStyle: const TextStyle(color: Colors.white38),
+                        filled: true,
+                        fillColor: Colors.white12,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: BorderSide.none,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                      ),
                     ),
                   ),
-                ),
+                ],
               ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          BlocBuilder<BettingBloc, BettingState>(
-            builder: (context, state) {
-              return Row(
+              const SizedBox(height: 12),
+              Row(
                 children: [
                   Expanded(
                     child: ElevatedButton(
@@ -511,17 +553,17 @@ class _GameScreenState extends State<GameScreen> {
                           ),
                   ),
                 ],
-              );
-            },
-          ),
-          if (_errorMessage != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              _errorMessage!,
-              style: const TextStyle(color: Colors.red, fontSize: 12),
-            ),
-          ],
-        ],
+              ),
+              if (_errorMessage != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _errorMessage!,
+                  style: const TextStyle(color: Colors.red, fontSize: 12),
+                ),
+              ],
+            ],
+          );
+        },
       ),
     );
   }
