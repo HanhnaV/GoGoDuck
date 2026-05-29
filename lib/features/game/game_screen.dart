@@ -3,11 +3,11 @@ import 'dart:math' as math;
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../betting/bloc/betting_bloc.dart';
 import '../betting/bloc/betting_event.dart';
 import '../betting/bloc/betting_state.dart';
+import '../auth/bloc/auth_bloc.dart';
 import '../auth/bloc/auth_state.dart';
 import 'game_logic_service.dart';
 
@@ -153,9 +153,8 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
 
-    final authState = context.read<dynamic>();
-    final uid = (authState as dynamic).user?.uid;
-    if (uid == null) {
+    final authState = context.read<AuthBloc>().state;
+    if (authState is! AuthAuthenticated) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Chưa đăng nhập!')),
       );
@@ -163,7 +162,7 @@ class _GameScreenState extends State<GameScreen> {
     }
 
     context.read<BettingBloc>().add(SubmitBetEvent(
-      uid: uid,
+      uid: authState.user.uid,
       raceId: _raceId,
       duckIndex: _selectedDuck!,
       amount: amount,
@@ -240,6 +239,7 @@ class _GameScreenState extends State<GameScreen> {
                 backgroundColor: Colors.green,
               ),
             );
+            context.read<BettingBloc>().add(ResetBettingState());
           } else if (state is BettingFailure) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
@@ -247,6 +247,7 @@ class _GameScreenState extends State<GameScreen> {
                 backgroundColor: Colors.red,
               ),
             );
+            context.read<BettingBloc>().add(ResetBettingState());
           }
         },
         child: _buildBody(),

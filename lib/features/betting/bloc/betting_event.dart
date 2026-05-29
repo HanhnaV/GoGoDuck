@@ -23,3 +23,5 @@ class SubmitBetEvent extends BettingEvent {
   @override
   List<Object?> get props => [uid, raceId, duckIndex, amount];
 }
+
+class ResetBettingState extends BettingEvent {}

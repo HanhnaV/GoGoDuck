@@ -7,9 +7,13 @@ abstract class BettingState extends Equatable {
   List<Object?> get props => [];
 }
 
-class BettingInitial extends BettingState {}
+class BettingInitial extends BettingState {
+  const BettingInitial();
+}
 
-class BettingLoading extends BettingState {}
+class BettingLoading extends BettingState {
+  const BettingLoading();
+}
 
 class BettingSuccess extends BettingState {}
 

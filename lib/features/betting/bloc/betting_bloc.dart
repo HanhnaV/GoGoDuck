@@ -7,8 +7,9 @@ import 'betting_state.dart';
 class BettingBloc extends Bloc<BettingEvent, BettingState> {
   final BettingRepository repository;
 
-  BettingBloc({required this.repository}) : super(BettingInitial()) {
+  BettingBloc({required this.repository}) : super(const BettingInitial()) {
     on<SubmitBetEvent>(_onSubmitBet);
+    on<ResetBettingState>(_onReset);
   }
 
   Future<void> _onSubmitBet(
@@ -27,5 +28,9 @@ class BettingBloc extends Bloc<BettingEvent, BettingState> {
     } catch (e) {
       emit(BettingFailure(e.toString().replaceFirst('Exception: ', '')));
     }
+  }
+
+  void _onReset(ResetBettingState event, Emitter<BettingState> emit) {
+    emit(BettingInitial());
   }
 }
