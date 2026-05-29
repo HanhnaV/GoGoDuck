@@ -23,3 +23,23 @@ class SubmitBetEvent extends BettingEvent {
   @override
   List<Object?> get props => [uid, raceId, duckIndex, amount];
 }
+
+class SelectDuckEvent extends BettingEvent {
+  final int duckIndex;
+
+  const SelectDuckEvent(this.duckIndex);
+
+  @override
+  List<Object?> get props => [duckIndex];
+}
+
+class UpdateAmountEvent extends BettingEvent {
+  final int amount;
+
+  const UpdateAmountEvent(this.amount);
+
+  @override
+  List<Object?> get props => [amount];
+}
+
+class ResetBettingState extends BettingEvent {}

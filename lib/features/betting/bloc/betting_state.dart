@@ -7,17 +7,37 @@ abstract class BettingState extends Equatable {
   List<Object?> get props => [];
 }
 
-class BettingInitial extends BettingState {}
+class BettingInitial extends BettingState {
+  final int? selectedDuck;
+  final int? betAmount;
 
-class BettingLoading extends BettingState {}
+  const BettingInitial({this.selectedDuck, this.betAmount});
 
-class BettingSuccess extends BettingState {}
+  @override
+  List<Object?> get props => [selectedDuck, betAmount];
+}
+
+class BettingLoading extends BettingState {
+  final int? selectedDuck;
+  final int? betAmount;
+
+  const BettingLoading({this.selectedDuck, this.betAmount});
+
+  @override
+  List<Object?> get props => [selectedDuck, betAmount];
+}
+
+class BettingSuccess extends BettingState {
+  const BettingSuccess();
+}
 
 class BettingFailure extends BettingState {
   final String error;
+  final int? selectedDuck;
+  final int? betAmount;
 
-  const BettingFailure(this.error);
+  const BettingFailure(this.error, {this.selectedDuck, this.betAmount});
 
   @override
-  List<Object?> get props => [error];
+  List<Object?> get props => [error, selectedDuck, betAmount];
 }

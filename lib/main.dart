@@ -6,6 +6,8 @@ import 'firebase_options.dart';
 import 'features/auth/auth_screen.dart';
 import 'features/auth/bloc/auth_bloc.dart';
 import 'features/auth/repository/auth_repository.dart';
+import 'features/betting/bloc/betting_bloc.dart';
+import 'features/betting/repository/betting_repository.dart';
 import 'features/home/home_screen.dart';
 import 'features/game/game_screen.dart';
 
@@ -22,8 +24,15 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider(
-      create: (_) => AuthBloc(repository: AuthRepository()),
+    return MultiBlocProvider(
+      providers: [
+        BlocProvider(
+          create: (_) => AuthBloc(repository: AuthRepository()),
+        ),
+        BlocProvider(
+          create: (_) => BettingBloc(repository: BettingRepository()),
+        ),
+      ],
       child: MaterialApp(
         title: 'GoGoDuck',
         theme: ThemeData(primarySwatch: Colors.orange),

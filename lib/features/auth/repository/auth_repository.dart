@@ -33,12 +33,13 @@ class AuthRepository {
     await _auth.signOut();
   }
 
-  Future<void> _initializeUserIfNew(String uid) async {
+  Future<void> _initializeUserIfNew(String uid, {String? displayName}) async {
     final userRef = _firestore.doc('users/$uid');
     final snapshot = await userRef.get();
 
     if (!snapshot.exists) {
       await userRef.set({
+        'display_name': displayName ?? 'Player',
         'balance': 1000,
         'total_wins': 0,
         'last_claim_time': '',
@@ -50,7 +51,10 @@ class AuthRepository {
   Future<void> ensureUserInitialized() async {
     final user = _auth.currentUser;
     if (user != null) {
-      await _initializeUserIfNew(user.uid);
+      await _initializeUserIfNew(
+        user.uid,
+        displayName: user.displayName ?? user.email?.split('@').first ?? 'Player',
+      );
     }
   }
 }
