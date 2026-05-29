@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'firebase_options.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 
-// Import các màn hình vừa tạo
+import 'firebase_options.dart';
 import 'features/auth/auth_screen.dart';
+import 'features/auth/bloc/auth_bloc.dart';
+import 'features/auth/repository/auth_repository.dart';
 import 'features/home/home_screen.dart';
 import 'features/game/game_screen.dart';
 
@@ -20,20 +22,23 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'GoGoDuck',
-      theme: ThemeData(primarySwatch: Colors.orange),
-      debugShowCheckedModeBanner: false,
-      initialRoute: '/auth',
-      routes: {
-        '/auth': (context) => const AuthScreen(),
-        '/home': (context) => const HomeScreen(),
-        '/game': (context) {
-          final args = ModalRoute.of(context)?.settings.arguments;
-          final raceId = args is String ? args : null;
-          return GameScreen(raceId: raceId);
+    return BlocProvider(
+      create: (_) => AuthBloc(repository: AuthRepository()),
+      child: MaterialApp(
+        title: 'GoGoDuck',
+        theme: ThemeData(primarySwatch: Colors.orange),
+        debugShowCheckedModeBanner: false,
+        initialRoute: '/auth',
+        routes: {
+          '/auth': (context) => const AuthScreen(),
+          '/home': (context) => const HomeScreen(),
+          '/game': (context) {
+            final args = ModalRoute.of(context)?.settings.arguments;
+            final raceId = args is String ? args : null;
+            return GameScreen(raceId: raceId);
+          },
         },
-      },
+      ),
     );
   }
 }
