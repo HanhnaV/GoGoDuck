@@ -9,8 +9,10 @@ class GameLogicService {
   static const double _positionIncrementMax = 2.5;
   static const double _winThreshold = 100.0;
   static const int _tickIntervalMs = 100;
+  static const int _bettingDurationSeconds = 30;
 
   Timer? _raceTimer;
+  Timer? _countdownTimer;
   final Random _random = Random();
   final FirebaseDatabase _rtdb = FirebaseDatabase.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -30,8 +32,35 @@ class GameLogicService {
 
     await _rtdb.ref('live_races/$raceId').update({
       'status': 'betting',
+      'time_left': _bettingDurationSeconds,
       'ducks': ducksMap,
     });
+
+    _startCountdown(raceId);
+  }
+
+  void _startCountdown(String raceId) {
+    _countdownTimer?.cancel();
+    int secondsLeft = _bettingDurationSeconds;
+
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
+      secondsLeft--;
+
+      if (secondsLeft <= 0) {
+        timer.cancel();
+        await _transitionToRacing(raceId);
+        return;
+      }
+
+      await _rtdb.ref('live_races/$raceId').update({
+        'time_left': secondsLeft,
+      });
+    });
+  }
+
+  Future<void> _transitionToRacing(String raceId) async {
+    await _rtdb.ref('live_races/$raceId').update({'status': 'racing'});
+    await _firestore.collection('races').doc(raceId).update({'status': 'racing'});
   }
 
   Future<void> runDuckRaceLoop(String raceId) async {
@@ -109,10 +138,12 @@ class GameLogicService {
 
   void dispose() {
     _raceTimer?.cancel();
+    _countdownTimer?.cancel();
   }
 
   Future<void> resetRace(String raceId) async {
     _raceTimer?.cancel();
+    _countdownTimer?.cancel();
     await _rtdb.ref('live_races/$raceId').remove();
     await _firestore.collection('races').doc(raceId).delete();
   }

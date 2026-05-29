@@ -8,6 +8,18 @@ class BettingRepository {
     required int amount,
   }) async {
     await FirebaseFirestore.instance.runTransaction((transaction) async {
+      final raceRef = FirebaseFirestore.instance.doc('races/$raceId');
+      final raceSnapshot = await transaction.get(raceRef);
+
+      if (!raceSnapshot.exists) {
+        throw Exception('Trận đấu không tồn tại!');
+      }
+
+      final raceStatus = raceSnapshot.data()?['status'] as String? ?? '';
+      if (raceStatus != 'betting') {
+        throw Exception('Đã hết thời gian đặt cược!');
+      }
+
       final userRef = FirebaseFirestore.instance.doc('users/$uid');
       final betRef = FirebaseFirestore.instance.doc('bets/${raceId}_$uid');
 

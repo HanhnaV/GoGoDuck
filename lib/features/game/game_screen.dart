@@ -2,7 +2,13 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../betting/bloc/betting_bloc.dart';
+import '../betting/bloc/betting_event.dart';
+import '../betting/bloc/betting_state.dart';
+import '../auth/bloc/auth_state.dart';
 import 'game_logic_service.dart';
 
 enum RaceState { idle, betting, racing, finished }
@@ -26,8 +32,12 @@ class _GameScreenState extends State<GameScreen> {
   RaceState _raceState = RaceState.idle;
   double _p1 = 0.0, _p2 = 0.0, _p3 = 0.0, _p4 = 0.0, _p5 = 0.0;
   int _winningDuck = 0;
+  int _timeLeft = 30;
   bool _isLoading = false;
   String? _errorMessage;
+
+  int? _selectedDuck;
+  final _amountController = TextEditingController(text: '100');
 
   @override
   void initState() {
@@ -49,13 +59,17 @@ class _GameScreenState extends State<GameScreen> {
 
       final data = Map<String, dynamic>.from(value as Map);
       final status = data['status'] as String? ?? 'idle';
+      final timeLeft = data['time_left'] as int? ?? 30;
 
       setState(() {
+        _timeLeft = timeLeft;
         if (status == 'betting') {
           _raceState = RaceState.betting;
+          _selectedDuck = null;
           _startDuckListener();
         } else if (status == 'racing') {
           _raceState = RaceState.racing;
+          _selectedDuck = null;
           _startDuckListener();
         } else if (status == 'finished') {
           _raceState = RaceState.finished;
@@ -109,6 +123,7 @@ class _GameScreenState extends State<GameScreen> {
           _isLoading = false;
           _p1 = _p2 = _p3 = _p4 = _p5 = 0.0;
           _winningDuck = 0;
+          _selectedDuck = null;
         });
       }
     } catch (e) {
@@ -119,6 +134,40 @@ class _GameScreenState extends State<GameScreen> {
         });
       }
     }
+  }
+
+  void _placeBet() {
+    if (_selectedDuck == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Vui lòng chọn một con vịt!')),
+      );
+      return;
+    }
+
+    final amountText = _amountController.text.trim();
+    final amount = int.tryParse(amountText);
+    if (amount == null || amount <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Vui lòng nhập số tiền hợp lệ!')),
+      );
+      return;
+    }
+
+    final authState = context.read<dynamic>();
+    final uid = (authState as dynamic).user?.uid;
+    if (uid == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Chưa đăng nhập!')),
+      );
+      return;
+    }
+
+    context.read<BettingBloc>().add(SubmitBetEvent(
+      uid: uid,
+      raceId: _raceId,
+      duckIndex: _selectedDuck!,
+      amount: amount,
+    ));
   }
 
   Future<void> _runRace() async {
@@ -151,6 +200,8 @@ class _GameScreenState extends State<GameScreen> {
           _raceState = RaceState.idle;
           _p1 = _p2 = _p3 = _p4 = _p5 = 0.0;
           _winningDuck = 0;
+          _timeLeft = 30;
+          _selectedDuck = null;
         });
       }
     } catch (e) {
@@ -167,6 +218,7 @@ class _GameScreenState extends State<GameScreen> {
   void dispose() {
     _duckSubscription?.cancel();
     _statusSubscription?.cancel();
+    _amountController.dispose();
     _gameService.dispose();
     super.dispose();
   }
@@ -174,8 +226,31 @@ class _GameScreenState extends State<GameScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Trường Đua Vịt 2D')),
-      body: _buildBody(),
+      appBar: AppBar(
+        title: const Text('Trường Đua Vịt 2D'),
+        backgroundColor: Colors.orange,
+        foregroundColor: Colors.white,
+      ),
+      body: BlocListener<BettingBloc, BettingState>(
+        listener: (context, state) {
+          if (state is BettingSuccess) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Đặt cược thành công!'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          } else if (state is BettingFailure) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(state.error),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        },
+        child: _buildBody(),
+      ),
     );
   }
 
@@ -213,6 +288,8 @@ class _GameScreenState extends State<GameScreen> {
               label: const Text('Bắt đầu đặt cược'),
               style: ElevatedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                backgroundColor: Colors.orange,
+                foregroundColor: Colors.white,
               ),
             ),
             if (_errorMessage != null) ...[
@@ -228,56 +305,223 @@ class _GameScreenState extends State<GameScreen> {
   Widget _buildBettingState() {
     return Stack(
       children: [
-        _buildRaceTrack(),
+        Column(
+          children: [
+            _buildCountdownHeader(),
+            Expanded(child: _buildRaceTrack()),
+          ],
+        ),
         Positioned(
           bottom: 0,
           left: 0,
           right: 0,
-          child: Container(
-            color: Colors.black54,
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              children: [
-                const Text(
-                  'ĐANG ĐẶT CƯỢC',
-                  style: TextStyle(
-                    color: Colors.amber,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
+          child: _buildBettingPanel(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCountdownHeader() {
+    final isUrgent = _timeLeft <= 10;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      color: isUrgent ? Colors.red : Colors.orange,
+      child: Column(
+        children: [
+          const Text(
+            'THỜI GIAN ĐẶT CƯỢC',
+            style: TextStyle(
+              color: Colors.white70,
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 1.5,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '$_timeLeft',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: isUrgent ? 56 : 48,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const Text(
+            'giây',
+            style: TextStyle(color: Colors.white70, fontSize: 14),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBettingPanel() {
+    final duckColors = [
+      Colors.yellow.shade700,
+      Colors.cyan.shade700,
+      Colors.pink.shade700,
+      Colors.green.shade700,
+      Colors.orange.shade700,
+    ];
+
+    return Container(
+      color: Colors.grey.shade900,
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            'Chọn vịt bạn tin sẽ thắng!',
+            style: TextStyle(color: Colors.white70, fontSize: 14),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: List.generate(5, (index) {
+              final duckNum = index + 1;
+              final isSelected = _selectedDuck == duckNum;
+              return GestureDetector(
+                onTap: () => setState(() => _selectedDuck = duckNum),
+                child: Column(
+                  children: [
+                    Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: duckColors[index],
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: isSelected ? Colors.white : Colors.transparent,
+                          width: 3,
+                        ),
+                        boxShadow: isSelected
+                            ? [BoxShadow(color: duckColors[index], blurRadius: 12)]
+                            : null,
+                      ),
+                      child: Center(
+                        child: Text(
+                          '$duckNum',
+                          style: const TextStyle(
+                            color: Colors.black87,
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Vịt $duckNum',
+                      style: TextStyle(
+                        color: isSelected ? Colors.white : Colors.white54,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              const Text(
+                'Tiền cược: ',
+                style: TextStyle(color: Colors.white70, fontSize: 14),
+              ),
+              Expanded(
+                child: TextField(
+                  controller: _amountController,
+                  keyboardType: TextInputType.number,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    hintText: 'Nhập số tiền',
+                    hintStyle: const TextStyle(color: Colors.white38),
+                    filled: true,
+                    fillColor: Colors.white12,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
                   ),
                 ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Chọn vịt bạn tin sẽ thắng!',
-                  style: TextStyle(color: Colors.white70),
-                ),
-                const SizedBox(height: 16),
-                if (_isLoading)
-                  const CircularProgressIndicator(color: Colors.white)
-                else
-                  ElevatedButton.icon(
-                    onPressed: _runRace,
-                    icon: const Icon(Icons.flag),
-                    label: const Text('BẮT ĐẦU ĐUA!'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          BlocBuilder<BettingBloc, BettingState>(
+            builder: (context, state) {
+              return Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: state is BettingLoading ? null : _placeBet,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.orange,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      child: state is BettingLoading
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Text(
+                              'ĐẶT CƯỢC',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  ElevatedButton(
+                    onPressed: _isLoading ? null : _runRace,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.red,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 32,
-                        vertical: 16,
+                        horizontal: 20,
+                        vertical: 14,
                       ),
                     ),
+                    child: _isLoading
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Text(
+                            'BẮT ĐẦU ĐUA',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
                   ),
-                if (_errorMessage != null) ...[
-                  const SizedBox(height: 8),
-                  Text(_errorMessage!,
-                      style: const TextStyle(color: Colors.red)),
                 ],
-              ],
-            ),
+              );
+            },
           ),
-        ),
-      ],
+          if (_errorMessage != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _errorMessage!,
+              style: const TextStyle(color: Colors.red, fontSize: 12),
+            ),
+          ],
+        ],
+      ),
     );
   }
 
@@ -373,6 +617,8 @@ class _GameScreenState extends State<GameScreen> {
               label: const Text('Đua lại'),
               style: ElevatedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                backgroundColor: Colors.orange,
+                foregroundColor: Colors.white,
               ),
             ),
           if (_errorMessage != null) ...[
@@ -405,7 +651,7 @@ class _GameScreenState extends State<GameScreen> {
 
     return Container(
       padding: const EdgeInsets.all(12),
-      color: Colors.grey[900],
+      color: Colors.grey.shade900,
       child: Wrap(
         spacing: 12,
         runSpacing: 8,
@@ -420,8 +666,10 @@ class _GameScreenState extends State<GameScreen> {
                 decoration: BoxDecoration(color: d.$1, shape: BoxShape.circle),
               ),
               const SizedBox(width: 4),
-              Text('${d.$2}: $pct%',
-                  style: const TextStyle(color: Colors.white, fontSize: 13)),
+              Text(
+                '${d.$2}: $pct%',
+                style: const TextStyle(color: Colors.white, fontSize: 13),
+              ),
             ],
           );
         }).toList(),
