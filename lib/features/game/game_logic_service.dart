@@ -64,11 +64,47 @@ class GameLogicService {
               'status': 'finished',
               'winning_duck': winner,
             });
+            await _distributeRewards(raceId, winner);
             return;
           }
         }
       },
     );
+  }
+
+  Future<void> _distributeRewards(String raceId, int winningDuckIndex) async {
+    final betsSnapshot = await _firestore
+        .collection('bets')
+        .where('race_id', isEqualTo: raceId)
+        .where('status', isEqualTo: 'pending')
+        .get();
+
+    final WriteBatch batch = _firestore.batch();
+
+    for (final betDoc in betsSnapshot.docs) {
+      final betData = betDoc.data();
+      final uid = betData['uid'] as String;
+      final duckIndex = betData['duck_index'] as int;
+      final amount = betData['amount'] as int;
+
+      final betRef = _firestore.doc('bets/${betDoc.id}');
+      final userRef = _firestore.doc('users/$uid');
+
+      if (duckIndex == winningDuckIndex) {
+        final rewardAmount = amount * 2;
+        batch.update(betRef, {'status': 'rewarded'});
+        batch.update(userRef, {
+          'balance': FieldValue.increment(rewardAmount),
+          'total_wins': FieldValue.increment(1),
+        });
+      } else {
+        batch.update(betRef, {'status': 'lost'});
+      }
+    }
+
+    await batch.commit();
+    // ignore: avoid_print
+    print('Đã hoàn thành trả thưởng tự động cho trận đấu $raceId');
   }
 
   void dispose() {
