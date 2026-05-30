@@ -9,7 +9,7 @@ class GameLogicService {
   static const double _positionIncrementMax = 2.5;
   static const double _winThreshold = 100.0;
   static const int _tickIntervalMs = 100;
-  static const int _bettingDurationSeconds = 30;
+  static const int _bettingDurationSeconds = 10;
 
   Timer? _raceTimer;
   Timer? _countdownTimer;
@@ -48,7 +48,9 @@ class GameLogicService {
 
       if (secondsLeft <= 0) {
         timer.cancel();
-        await _transitionToRacing(raceId);
+        await _rtdb.ref('live_races/$raceId').update({'status': 'racing'});
+        await _firestore.collection('races').doc(raceId).update({'status': 'racing'});
+        await runDuckRaceLoop(raceId);
         return;
       }
 
@@ -56,11 +58,6 @@ class GameLogicService {
         'time_left': secondsLeft,
       });
     });
-  }
-
-  Future<void> _transitionToRacing(String raceId) async {
-    await _rtdb.ref('live_races/$raceId').update({'status': 'racing'});
-    await _firestore.collection('races').doc(raceId).update({'status': 'racing'});
   }
 
   Future<void> runDuckRaceLoop(String raceId) async {
@@ -88,7 +85,10 @@ class GameLogicService {
           if (positions[i] >= _winThreshold) {
             timer.cancel();
             final winner = i + 1;
-            await _rtdb.ref('live_races/$raceId').update({'status': 'finished'});
+            await _rtdb.ref('live_races/$raceId').update({
+              'status': 'finished',
+              'winning_duck': winner,
+            });
             await _firestore.collection('races').doc(raceId).update({
               'status': 'finished',
               'winning_duck': winner,
