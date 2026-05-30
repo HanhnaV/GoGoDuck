@@ -36,6 +36,19 @@ class BettingRepository {
       final userRef = FirebaseFirestore.instance.doc('users/$uid');
       final betRef = FirebaseFirestore.instance.doc('bets/${raceId}_$uid');
 
+      // ignore: avoid_print
+      print('[BETTING_REPO] Checking existing bet at: bets/${raceId}_$uid');
+
+      final betSnapshot = await transaction.get(betRef);
+      // ignore: avoid_print
+      print('[BETTING_REPO] betSnapshot exists: ${betSnapshot.exists}');
+
+      if (betSnapshot.exists) {
+        // ignore: avoid_print
+        print('[BETTING_REPO] FAIL: Bet already exists');
+        throw Exception('Bạn đã đặt cược cho trận này rồi!');
+      }
+
       final userSnapshot = await transaction.get(userRef);
       // ignore: avoid_print
       print('[BETTING_REPO] Transaction step 2 - userSnapshot exists: ${userSnapshot.exists}');
@@ -56,19 +69,9 @@ class BettingRepository {
         throw Exception('Không đủ số dư để đặt cược!');
       }
 
-      final betSnapshot = await transaction.get(betRef);
-      // ignore: avoid_print
-      print('[BETTING_REPO] Transaction step 3 - betSnapshot exists: ${betSnapshot.exists}');
-
-      if (betSnapshot.exists) {
-        // ignore: avoid_print
-        print('[BETTING_REPO] FAIL: Bet already exists');
-        throw Exception('Bạn đã đặt cược cho trận này rồi!');
-      }
-
       // ignore: avoid_print
       print('[BETTING_REPO] All checks passed - writing bet to Firestore...');
-      transaction.update(userRef, {'balance': balance - amount});
+      transaction.update(userRef, {'balance': FieldValue.increment(-amount)});
 
       transaction.set(betRef, {
         'bet_id': '${raceId}_$uid',
