@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../auth/bloc/auth_bloc.dart';
 import '../auth/bloc/auth_event.dart';
 import '../auth/bloc/auth_state.dart';
+import '../../services/audio_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -15,6 +16,12 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    AudioService.I.playBGM('assets/nhac_nen_sanh_cho.mp3');
+  }
 
   Future<void> _startRace() async {
     setState(() => _isLoading = true);
@@ -48,183 +55,187 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return BlocListener<AuthBloc, AuthState>(
-      listener: (context, state) {
-        if (state is AuthUnauthenticated) {
-          Navigator.pushReplacementNamed(context, '/auth');
-        }
-      },
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Sảnh Chờ'),
-          centerTitle: true,
-          backgroundColor: Colors.orange,
-          foregroundColor: Colors.white,
-          automaticallyImplyLeading: false,
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.logout),
-              onPressed: () {
-                showDialog(
-                  context: context,
-                  builder: (ctx) => AlertDialog(
-                    title: const Text('Đăng xuất'),
-                    content: const Text('Bạn có chắc muốn đăng xuất?'),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        child: const Text('Hủy'),
-                      ),
-                      TextButton(
-                        onPressed: () {
-                          Navigator.pop(ctx);
-                          context.read<AuthBloc>().add(AuthSignOutRequested());
-                        },
-                        child: const Text('Đăng xuất'),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
-          ],
-        ),
-        body: BlocBuilder<AuthBloc, AuthState>(
-          builder: (context, authState) {
-            if (authState is! AuthAuthenticated) {
-              return const Center(child: CircularProgressIndicator());
-            }
+    return Listener(
+      onPointerDown: (_) => AudioService.I.onFirstTap(),
+      child: BlocListener<AuthBloc, AuthState>(
+        listener: (context, state) {
+          if (state is AuthUnauthenticated) {
+            Navigator.pushReplacementNamed(context, '/auth');
+          }
+        },
+        child: Scaffold(
+          appBar: AppBar(
+            title: const Text('Sảnh Chờ'),
+            centerTitle: true,
+            backgroundColor: Colors.orange,
+            foregroundColor: Colors.white,
+            automaticallyImplyLeading: false,
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.logout),
+                onPressed: () {
+                  showDialog(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      title: const Text('Đăng xuất'),
+                      content: const Text('Bạn có chắc muốn đăng xuất?'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(ctx),
+                          child: const Text('Hủy'),
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            Navigator.pop(ctx);
+                            AudioService.I.stopBGM();
+                            context.read<AuthBloc>().add(AuthSignOutRequested());
+                          },
+                          child: const Text('Đăng xuất'),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+          body: BlocBuilder<AuthBloc, AuthState>(
+            builder: (context, authState) {
+              if (authState is! AuthAuthenticated) {
+                return const Center(child: CircularProgressIndicator());
+              }
 
-            final uid = authState.user.uid;
+              final uid = authState.user.uid;
 
-            return StreamBuilder<DocumentSnapshot>(
-              stream: FirebaseFirestore.instance.doc('users/$uid').snapshots(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
+              return StreamBuilder<DocumentSnapshot>(
+                stream: FirebaseFirestore.instance.doc('users/$uid').snapshots(),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
 
-                final data = snapshot.data?.data() as Map<String, dynamic>?;
-                final displayName = data?['display_name'] ?? 'Player';
-                final balance = data?['balance'] ?? 0;
-                final totalWins = data?['total_wins'] ?? 0;
+                  final data = snapshot.data?.data() as Map<String, dynamic>?;
+                  final displayName = data?['display_name'] ?? 'Player';
+                  final balance = data?['balance'] ?? 0;
+                  final totalWins = data?['total_wins'] ?? 0;
 
-                return Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(
-                        Icons.sports_score,
-                        size: 100,
-                        color: Colors.orange,
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Xin chào, $displayName',
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 24,
-                          vertical: 12,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.orange.shade50,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.orange.shade200),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(
-                              Icons.account_balance_wallet,
-                              color: Colors.orange,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              'Số dư: $balance',
-                              style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.orange,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 24,
-                          vertical: 12,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.green.shade50,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.green.shade200),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.emoji_events,
-                              color: Colors.green.shade700,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              'Tổng thắng: $totalWins',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.green.shade700,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'GoGoDuck',
-                        style: TextStyle(
-                          fontSize: 40,
-                          fontWeight: FontWeight.bold,
+                  return Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(
+                          Icons.sports_score,
+                          size: 100,
                           color: Colors.orange,
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'Đua Vịt Trực Tuyến',
-                        style: TextStyle(fontSize: 16, color: Colors.grey),
-                      ),
-                      const SizedBox(height: 60),
-                      if (_isLoading)
-                        const CircularProgressIndicator()
-                      else
-                        ElevatedButton.icon(
-                          onPressed: _startRace,
-                          icon: const Icon(Icons.play_arrow),
-                          label: const Text('Bắt đầu đua!'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.orange,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 48,
-                              vertical: 20,
-                            ),
-                            textStyle: const TextStyle(fontSize: 18),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Xin chào, $displayName',
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
                           ),
                         ),
-                    ],
-                  ),
-                );
-              },
-            );
-          },
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 24,
+                            vertical: 12,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.shade50,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.orange.shade200),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.account_balance_wallet,
+                                color: Colors.orange,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Số dư: $balance',
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.orange,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 24,
+                            vertical: 12,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.green.shade50,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.green.shade200),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.emoji_events,
+                                color: Colors.green.shade700,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Tổng thắng: $totalWins',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.green.shade700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        const Text(
+                          'GoGoDuck',
+                          style: TextStyle(
+                            fontSize: 40,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.orange,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Đua Vịt Trực Tuyến',
+                          style: TextStyle(fontSize: 16, color: Colors.grey),
+                        ),
+                        const SizedBox(height: 60),
+                        if (_isLoading)
+                          const CircularProgressIndicator()
+                        else
+                          ElevatedButton.icon(
+                            onPressed: _startRace,
+                            icon: const Icon(Icons.play_arrow),
+                            label: const Text('Bắt đầu đua!'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.orange,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 48,
+                                vertical: 20,
+                              ),
+                              textStyle: const TextStyle(fontSize: 18),
+                            ),
+                          ),
+                      ],
+                    ),
+                  );
+                },
+              );
+            },
+          ),
         ),
       ),
     );

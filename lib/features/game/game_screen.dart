@@ -10,6 +10,7 @@ import '../betting/bloc/betting_event.dart';
 import '../betting/bloc/betting_state.dart';
 import '../auth/bloc/auth_bloc.dart';
 import '../auth/bloc/auth_state.dart';
+import '../../services/audio_service.dart';
 import 'game_logic_service.dart';
 
 enum RaceState { idle, betting, racing, finished }
@@ -40,6 +41,8 @@ class _GameScreenState extends State<GameScreen> {
 
   RaceState _raceState = RaceState.idle;
   double _p1 = 0.0, _p2 = 0.0, _p3 = 0.0, _p4 = 0.0, _p5 = 0.0;
+  int _duckFrame = 0;
+  Timer? _duckAnimTimer;
   int _winningDuck = 0;
   int _timeLeft = 10;
   bool _isLoading = false;
@@ -51,12 +54,28 @@ class _GameScreenState extends State<GameScreen> {
   int? _userReward;
   bool _hasBet = false;
 
+  void _startDuckAnimation() {
+    _duckAnimTimer?.cancel();
+    _duckAnimTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      if (!mounted) return;
+      setState(() {
+        _duckFrame = (_duckFrame % 6) + 1;
+      });
+    });
+  }
+
+  void _stopDuckAnimation() {
+    _duckAnimTimer?.cancel();
+    _duckAnimTimer = null;
+  }
+
   @override
   void initState() {
     super.initState();
     _raceId = widget.raceId ?? 'demo_race';
     _gameService = GameLogicService();
     _listenToRaceStatus();
+    AudioService.I.playBGM('assets/nhac_nen_sanh_cho.mp3');
   }
 
   void _listenToRaceStatus() {
@@ -100,6 +119,15 @@ class _GameScreenState extends State<GameScreen> {
         }
 
         if (!mounted) return;
+
+        // Handle audio for finished state
+        final isUserWin = betStatus == 'rewarded';
+        if (isUserWin) {
+          AudioService.I.playSFX('assets/tieng_cuoc_thang.mp3');
+        }
+        _stopDuckAnimation();
+        AudioService.I.stopBGM();
+
         setState(() {
           _timeLeft = timeLeft;
           _raceState = RaceState.finished;
@@ -111,6 +139,31 @@ class _GameScreenState extends State<GameScreen> {
         });
       } else {
         if (!mounted) return;
+
+        // Determine the new state
+        final newRaceState = status == 'betting'
+            ? RaceState.betting
+            : status == 'racing'
+                ? RaceState.racing
+                : RaceState.idle;
+
+        // Only play audio when state actually CHANGES
+        if (newRaceState != _raceState) {
+          if (newRaceState == RaceState.betting) {
+            _stopDuckAnimation();
+            AudioService.I.playBGM('assets/nhac_nen_sanh_cho.mp3');
+          } else if (newRaceState == RaceState.racing) {
+            // Only play start sound when transitioning from betting to racing
+            if (_raceState == RaceState.betting) {
+              AudioService.I.playSFX('assets/start.mp3');
+            }
+            _startDuckAnimation();
+            AudioService.I.playBGM('assets/nhac_nen_luc_dua.mp3');
+          } else if (newRaceState == RaceState.finished) {
+            _stopDuckAnimation();
+          }
+        }
+
         setState(() {
           _timeLeft = timeLeft;
           if (status == 'betting') {
@@ -164,6 +217,8 @@ class _GameScreenState extends State<GameScreen> {
     });
     try {
       await _gameService.startNewRacePeriod(_raceId);
+      AudioService.I.stopBGM();
+      AudioService.I.playBGM('assets/nhac_nen_sanh_cho.mp3');
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -285,10 +340,13 @@ class _GameScreenState extends State<GameScreen> {
     setState(() => _isLoading = true);
     try {
       await _gameService.resetRace(_raceId);
+      AudioService.I.stopBGM();
+      _stopDuckAnimation();
       if (mounted) {
         setState(() {
           _isLoading = false;
           _raceState = RaceState.idle;
+          _duckFrame = 0;
           _p1 = _p2 = _p3 = _p4 = _p5 = 0.0;
           _winningDuck = 0;
           _timeLeft = 10;
@@ -313,6 +371,7 @@ class _GameScreenState extends State<GameScreen> {
   void dispose() {
     _duckSubscription?.cancel();
     _statusSubscription?.cancel();
+    _duckAnimTimer?.cancel();
     _amountController.dispose();
     _gameService.dispose();
     super.dispose();
@@ -320,48 +379,51 @@ class _GameScreenState extends State<GameScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Trường Đua Vịt 2D'),
-        backgroundColor: Colors.orange,
-        foregroundColor: Colors.white,
-      ),
-      body: BlocListener<BettingBloc, BettingState>(
-        listener: (context, state) {
-          if (state is BettingSuccess) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: const Text('Đặt cược thành công!'),
-                backgroundColor: Colors.green,
-                behavior: SnackBarBehavior.floating,
-                duration: const Duration(milliseconds: 1500),
-                margin: EdgeInsets.only(
-                  bottom: MediaQuery.of(context).size.height - 100,
-                  left: 10,
-                  right: 10,
+    return Listener(
+      onPointerDown: (_) => AudioService.I.onFirstTap(),
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Trường Đua Vịt 2D'),
+          backgroundColor: Colors.orange,
+          foregroundColor: Colors.white,
+        ),
+        body: BlocListener<BettingBloc, BettingState>(
+          listener: (context, state) {
+            if (state is BettingSuccess) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: const Text('Đặt cược thành công!'),
+                  backgroundColor: Colors.green,
+                  behavior: SnackBarBehavior.floating,
+                  duration: const Duration(milliseconds: 1500),
+                  margin: EdgeInsets.only(
+                    bottom: MediaQuery.of(context).size.height - 100,
+                    left: 10,
+                    right: 10,
+                  ),
                 ),
-              ),
-            );
-            context.read<BettingBloc>().add(ResetBettingState());
-          } else if (state is BettingFailure) {
-            setState(() => _hasBet = false);
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(state.error),
-                backgroundColor: Colors.red,
-                behavior: SnackBarBehavior.floating,
-                duration: const Duration(milliseconds: 1500),
-                margin: EdgeInsets.only(
-                  bottom: MediaQuery.of(context).size.height - 100,
-                  left: 10,
-                  right: 10,
+              );
+              context.read<BettingBloc>().add(ResetBettingState());
+            } else if (state is BettingFailure) {
+              setState(() => _hasBet = false);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(state.error),
+                  backgroundColor: Colors.red,
+                  behavior: SnackBarBehavior.floating,
+                  duration: const Duration(milliseconds: 1500),
+                  margin: EdgeInsets.only(
+                    bottom: MediaQuery.of(context).size.height - 100,
+                    left: 10,
+                    right: 10,
+                  ),
                 ),
-              ),
-            );
-            context.read<BettingBloc>().add(ResetBettingState());
-          }
-        },
-        child: _buildBody(),
+              );
+              context.read<BettingBloc>().add(ResetBettingState());
+            }
+          },
+          child: _buildBody(),
+        ),
       ),
     );
   }
@@ -477,9 +539,11 @@ class _GameScreenState extends State<GameScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          CustomPaint(
-            painter: DuckPainter(duckColor: color, size: 32),
-            size: const Size(32, 32),
+          Image.asset(
+            'assets/duck/duck$_userSelectedDuck.png',
+            width: 32,
+            height: 32,
+            fit: BoxFit.contain,
           ),
           const SizedBox(width: 12),
           Text(
@@ -530,8 +594,12 @@ class _GameScreenState extends State<GameScreen> {
     final hasBet = _userSelectedDuck == duckNum;
 
     return GestureDetector(
-      onTap: _hasBet ? null : () {
-        context.read<BettingBloc>().add(SelectDuckEvent(duckNum));
+      onTap: () {
+        // Play sound every time user taps to select/change duck
+        AudioService.I.playSFX('assets/select_duck.mp3');
+        if (!_hasBet) {
+          context.read<BettingBloc>().add(SelectDuckEvent(duckNum));
+        }
       },
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 4),
@@ -554,9 +622,11 @@ class _GameScreenState extends State<GameScreen> {
             Stack(
               alignment: Alignment.center,
               children: [
-                CustomPaint(
-                  painter: DuckPainter(duckColor: color, size: isSelected ? 64 : 56),
-                  size: Size(isSelected ? 64 : 56, isSelected ? 64 : 56),
+                Image.asset(
+                  'assets/duck/duck1.png',
+                  width: isSelected ? 64 : 56,
+                  height: isSelected ? 64 : 56,
+                  fit: BoxFit.contain,
                 ),
                 if (hasBet)
                   Positioned(
@@ -658,6 +728,9 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   Widget _buildBettingPanel() {
+    final authState = context.read<AuthBloc>().state;
+    final userId = authState is AuthAuthenticated ? authState.user.uid : null;
+
     return Container(
       color: Colors.grey.shade900,
       padding: const EdgeInsets.all(16),
@@ -674,37 +747,36 @@ class _GameScreenState extends State<GameScreen> {
           return Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              StreamBuilder<DocumentSnapshot>(
-                stream: FirebaseFirestore.instance
-                    .doc('users/${context.read<AuthBloc>().state is AuthAuthenticated ? (context.read<AuthBloc>().state as AuthAuthenticated).user.uid : ''}')
-                    .snapshots(),
-                builder: (context, snapshot) {
-                  final balance = (snapshot.data?.data() as Map<String, dynamic>?)?['balance'] as int? ?? 0;
-                  return Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(Icons.account_balance_wallet, color: Colors.orange, size: 18),
-                        const SizedBox(width: 8),
-                        Text(
-                          'So du: $balance Xu',
-                          style: const TextStyle(
-                            color: Colors.orange,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
+              if (userId != null)
+                StreamBuilder<DocumentSnapshot>(
+                  stream: FirebaseFirestore.instance.doc('users/$userId').snapshots(),
+                  builder: (context, snapshot) {
+                    final balance = (snapshot.data?.data() as Map<String, dynamic>?)?['balance'] as int? ?? 0;
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.account_balance_wallet, color: Colors.orange, size: 18),
+                          const SizedBox(width: 8),
+                          Text(
+                            'So du: $balance Xu',
+                            style: const TextStyle(
+                              color: Colors.orange,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                  );
-                },
-              ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
               const SizedBox(height: 12),
               Row(
                 children: [
@@ -1053,12 +1125,11 @@ class _GameScreenState extends State<GameScreen> {
           if (isUserBet && !isWinner)
             const Icon(Icons.close, color: Colors.red, size: 16),
           const SizedBox(height: 2),
-          CustomPaint(
-            painter: DuckPainter(
-              duckColor: color,
-              size: isWinner ? 48 : 40,
-            ),
-            size: Size(isWinner ? 48 : 40, isWinner ? 48 : 40),
+          Image.asset(
+            'assets/duck/duck$duckNum.png',
+            width: isWinner ? 48 : 40,
+            height: isWinner ? 48 : 40,
+            fit: BoxFit.contain,
           ),
           const SizedBox(height: 4),
           Text(
@@ -1092,11 +1163,104 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   Widget _buildRaceTrack() {
+    const finishLineOffset = 40.0;
     return Padding(
       padding: const EdgeInsets.all(16),
-      child: CustomPaint(
-        painter: DuckRacePainter(p1: _p1, p2: _p2, p3: _p3, p4: _p4, p5: _p5),
-        size: Size.infinite,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Column(
+          children: [
+            // Top border
+            const Image(
+              image: AssetImage('assets/background/top.jpg'),
+              fit: BoxFit.cover,
+              width: double.infinity,
+            ),
+            // 5 race lanes
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final trackWidth = constraints.maxWidth - finishLineOffset;
+                  final positions = [_p1, _p2, _p3, _p4, _p5];
+                  return Stack(
+                    children: List.generate(5, (i) {
+                      final clampedPos = positions[i].clamp(0.0, 100.0);
+                      final xPixel = (clampedPos / 100.0) * trackWidth;
+                      return Positioned(
+                        top: constraints.maxHeight / 5 * i,
+                        left: 0,
+                        right: 0,
+                        height: constraints.maxHeight / 5,
+                        child: Stack(
+                          children: [
+                            Positioned.fill(
+                              child: Image.asset(
+                                'assets/background/race.jpg',
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                            // Duck
+                            Positioned(
+                              left: xPixel - 20,
+                              top: 0,
+                              bottom: 0,
+                              child: Center(
+                                child: SizedBox(
+                                  width: 40,
+                                  height: 40,
+                                  child: Stack(
+                                    alignment: Alignment.center,
+                                    children: [
+                                      Image.asset(
+                                        'assets/duck/duck$_duckFrame.png',
+                                        width: 40,
+                                        height: 40,
+                                        fit: BoxFit.contain,
+                                      ),
+                                      Positioned(
+                                        right: 0,
+                                        bottom: 0,
+                                        child: Container(
+                                          width: 14,
+                                          height: 14,
+                                          decoration: BoxDecoration(
+                                            color: duckColors[i],
+                                            shape: BoxShape.circle,
+                                            border: Border.all(color: Colors.white, width: 1),
+                                          ),
+                                          child: Center(
+                                            child: Text(
+                                              '${i + 1}',
+                                              style: const TextStyle(
+                                                color: Colors.black,
+                                                fontSize: 9,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                  );
+                },
+              ),
+            ),
+            // Bottom border
+            const Image(
+              image: AssetImage('assets/background/bottom.jpg'),
+              fit: BoxFit.cover,
+              width: double.infinity,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1207,6 +1371,7 @@ class DuckRacePainter extends CustomPainter {
     final laneHeight = size.height / 5;
     final trackWidth = size.width - _finishLineOffset;
 
+    // Draw lane dividers
     paint.color = Colors.white24;
     paint.strokeWidth = 1;
     for (int i = 1; i < 5; i++) {
@@ -1214,6 +1379,7 @@ class DuckRacePainter extends CustomPainter {
       _drawDashedLine(canvas, Offset(0, y), Offset(size.width, y), paint);
     }
 
+    // Draw finish line
     paint.color = Colors.red;
     paint.strokeWidth = 3;
     canvas.drawLine(
@@ -1222,6 +1388,7 @@ class DuckRacePainter extends CustomPainter {
       paint,
     );
 
+    // Draw ducks
     final positions = [p1, p2, p3, p4, p5];
     for (int i = 0; i < 5; i++) {
       final laneCenterY = laneHeight * i + laneHeight / 2;
