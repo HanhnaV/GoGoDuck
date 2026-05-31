@@ -193,6 +193,22 @@ class _HomeScreenState extends State<HomeScreen> {
                     textStyle: const TextStyle(fontSize: 18),
                   ),
                 ),
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                onPressed: () => Navigator.pushNamed(context, '/showcase'),
+                icon: const Icon(Icons.style),
+                label: const Text('SHOWCASE (CYBERPUNK)'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.black,
+                  foregroundColor: const Color(0xFF00FFFF),
+                  side: const BorderSide(color: Color(0xFF00FFFF)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 48,
+                    vertical: 16,
+                  ),
+                  textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+              ),
             ],
           ),
         ),

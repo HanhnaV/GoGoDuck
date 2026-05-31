@@ -1,9 +1,13 @@
 import 'dart:async';
-import 'dart:math' as math;
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
+import 'package:flame/game.dart';
+import 'package:flame_audio/flame_audio.dart';
 
 import 'game_logic_service.dart';
+import 'duck_race_game.dart';
 
 enum RaceState { idle, betting, racing, finished }
 
@@ -29,11 +33,30 @@ class _GameScreenState extends State<GameScreen> {
   bool _isLoading = false;
   String? _errorMessage;
 
+  DuckRaceGame? _duckRaceGame;
+
+  int _selectedDuck = 1;
+  int _betAmount = 10;
+  bool _hasPlacedBet = false;
+
+  final List<String> _duckSprites = [
+    'assets/images/duck_cyber_orange_spritesheet.png',
+    'assets/images/duck_cyber_white_spritesheet.png',
+    'assets/images/duck_cyber_yellow_spritesheet.png',
+    'assets/images/duck_cyber_green_spritesheet.png',
+    'assets/images/duck_cyber_purple_spritesheet.png',
+  ];
+
   @override
   void initState() {
     super.initState();
+    FlameAudio.audioCache.loadAll(['sfx_quack.mp3', 'sfx_win.mp3']);
     _raceId = widget.raceId ?? 'demo_race';
     _gameService = GameLogicService();
+    _duckRaceGame = DuckRaceGame(
+      positions: [_p1, _p2, _p3, _p4, _p5],
+      onRaceFinished: _onRaceFinishedLocally,
+    );
     _listenToRaceStatus();
   }
 
@@ -109,6 +132,7 @@ class _GameScreenState extends State<GameScreen> {
           _isLoading = false;
           _p1 = _p2 = _p3 = _p4 = _p5 = 0.0;
           _winningDuck = 0;
+          _hasPlacedBet = false;
         });
       }
     } catch (e) {
@@ -122,23 +146,95 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   Future<void> _runRace() async {
+    // Start the LOCAL Flame RNG race instead of Firebase
+    _duckRaceGame?.startRace();
     setState(() {
-      _isLoading = true;
+      _raceState = RaceState.racing;
       _errorMessage = null;
     });
-    try {
-      await _gameService.runDuckRaceLoop(_raceId);
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _errorMessage = 'Không thể chạy đua: $e';
+  }
+
+  void _onRaceFinishedLocally(int winnerDuckIndex) {
+    if (!mounted) return;
+    setState(() {
+      _raceState = RaceState.finished;
+      _winningDuck = winnerDuckIndex;
+    });
+
+    final userWon = _hasPlacedBet && (winnerDuckIndex == _selectedDuck);
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+
+    if (uid != null && _hasPlacedBet) {
+      // Update balance: +betAmount if win, already deducted on bet placement
+      if (userWon) {
+        FlameAudio.play('sfx_win.mp3');
+        FirebaseFirestore.instance.doc('users/$uid').update({
+          'balance': FieldValue.increment(_betAmount * 2), // refund + winnings
         });
       }
+      // If lost: balance was already deducted when placing bet — no action needed
     }
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.grey[900],
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Text(userWon ? '🏆' : '😢', style: const TextStyle(fontSize: 36)),
+            const SizedBox(width: 12),
+            Text(
+              userWon ? 'THẮNG RỒI!' : 'THUA RỒI!',
+              style: TextStyle(
+                color: userWon ? Colors.yellowAccent : Colors.redAccent,
+                fontWeight: FontWeight.bold,
+                fontSize: 22,
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Vịt $winnerDuckIndex về đích đầu tiên!',
+              style: const TextStyle(color: Colors.white, fontSize: 16),
+            ),
+            const SizedBox(height: 8),
+            if (_hasPlacedBet)
+              Text(
+                userWon
+                    ? '✅ Bạn đặt Vịt $_selectedDuck — ĐÚNG! +${_betAmount}xu'
+                    : '❌ Bạn đặt Vịt $_selectedDuck — SAI. -${_betAmount}xu',
+                style: TextStyle(
+                  color: userWon ? Colors.greenAccent : Colors.redAccent,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              // Reset everything for a new round
+              setState(() {
+                _raceState = RaceState.betting;
+                _hasPlacedBet = false;
+                _winningDuck = 0;
+                _errorMessage = null;
+              });
+              _duckRaceGame?.resetRace();
+            },
+            child: const Text('🔄 CHƠI LẠI', style: TextStyle(color: Colors.amber, fontSize: 16)),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _resetRace() async {
@@ -151,6 +247,7 @@ class _GameScreenState extends State<GameScreen> {
           _raceState = RaceState.idle;
           _p1 = _p2 = _p3 = _p4 = _p5 = 0.0;
           _winningDuck = 0;
+          _hasPlacedBet = false;
         });
       }
     } catch (e) {
@@ -225,57 +322,316 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  Widget _buildBettingState() {
-    return Stack(
-      children: [
-        _buildRaceTrack(),
-        Positioned(
-          bottom: 0,
-          left: 0,
-          right: 0,
-          child: Container(
-            color: Colors.black54,
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              children: [
-                const Text(
-                  'ĐANG ĐẶT CƯỢC',
-                  style: TextStyle(
-                    color: Colors.amber,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
+  Future<void> _placeBet(int currentBalance) async {
+    if (_betAmount > currentBalance) {
+      setState(() => _errorMessage = 'Số dư không đủ để đặt cược!');
+      return;
+    }
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final batch = FirebaseFirestore.instance.batch();
+      final betRef = FirebaseFirestore.instance.collection('bets').doc();
+      final userRef = FirebaseFirestore.instance.doc('users/$uid');
+
+      batch.set(betRef, {
+        'uid': uid,
+        'race_id': _raceId,
+        'duck_index': _selectedDuck,
+        'amount': _betAmount,
+        'status': 'pending',
+        'created_at': FieldValue.serverTimestamp(),
+      });
+
+      batch.update(userRef, {
+        'balance': FieldValue.increment(-_betAmount),
+      });
+
+      await batch.commit();
+
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _hasPlacedBet = true;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Đặt cược thành công!'), backgroundColor: Colors.green),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = 'Lỗi đặt cược: $e';
+        });
+      }
+    }
+  }
+  void _showCharacterSelectionBottomSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFF0F172A),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+            border: Border.all(color: Colors.cyanAccent.withOpacity(0.5), width: 2),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.cyanAccent.withOpacity(0.2),
+                blurRadius: 10,
+                spreadRadius: 2,
+              )
+            ],
+          ),
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'SELECT_CHARACTER_MODEL',
+                style: TextStyle(
+                  color: Colors.cyanAccent,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 2,
                 ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Chọn vịt bạn tin sẽ thắng!',
-                  style: TextStyle(color: Colors.white70),
-                ),
-                const SizedBox(height: 16),
-                if (_isLoading)
-                  const CircularProgressIndicator(color: Colors.white)
-                else
-                  ElevatedButton.icon(
-                    onPressed: _runRace,
-                    icon: const Icon(Icons.flag),
-                    label: const Text('BẮT ĐẦU ĐUA!'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 32,
-                        vertical: 16,
+              ),
+              const SizedBox(height: 24),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: List.generate(5, (index) {
+                  final duckNum = index + 1;
+                  final isSelected = _selectedDuck == duckNum;
+                  final duckColors = [
+                    Colors.orangeAccent,
+                    Colors.white,
+                    Colors.yellowAccent,
+                    Colors.greenAccent,
+                    Colors.purpleAccent
+                  ];
+                  return GestureDetector(
+                    onTap: () {
+                      FlameAudio.play('sfx_quack.mp3');
+                      setState(() => _selectedDuck = duckNum);
+                      Navigator.pop(ctx);
+                    },
+                    child: Container(
+                      width: 60,
+                      height: 60,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1E293B),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: isSelected ? Colors.cyanAccent : Colors.white12,
+                          width: isSelected ? 3 : 1,
+                        ),
+                        boxShadow: isSelected
+                            ? [
+                                BoxShadow(
+                                  color: Colors.cyanAccent.withOpacity(0.5),
+                                  blurRadius: 8,
+                                )
+                              ]
+                            : null,
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: DuckAvatar(assetPath: _duckSprites[index]),
                       ),
                     ),
-                  ),
-                if (_errorMessage != null) ...[
-                  const SizedBox(height: 8),
-                  Text(_errorMessage!,
-                      style: const TextStyle(color: Colors.red)),
-                ],
-              ],
+                  );
+                }),
+              ),
             ),
+            const SizedBox(height: 16),
+          ],
           ),
+        );
+      },
+    );
+  }
+
+  Widget _buildCharacterSelector() {
+    final duckColors = [
+      Colors.orangeAccent,
+      Colors.white,
+      Colors.yellowAccent,
+      Colors.greenAccent,
+      Colors.purpleAccent
+    ];
+    return GestureDetector(
+      onTap: _showCharacterSelectionBottomSheet,
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0F172A),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.cyanAccent.withOpacity(0.5), width: 1.5),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.cyanAccent.withOpacity(0.15),
+              blurRadius: 8,
+              spreadRadius: 1,
+            )
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 50,
+              height: 50,
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E293B),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: duckColors[_selectedDuck - 1], width: 2),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: DuckAvatar(assetPath: _duckSprites[_selectedDuck - 1]),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'SELECTED MODEL',
+                    style: TextStyle(
+                      color: Colors.white54,
+                      fontSize: 12,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'VỊT SỐ $_selectedDuck',
+                    style: const TextStyle(
+                      color: Colors.cyanAccent,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.arrow_forward_ios, color: Colors.cyanAccent, size: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBettingState() {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    return Column(
+      children: [
+        Expanded(child: _buildRaceTrack()),
+        Container(
+          color: Colors.black87,
+            padding: const EdgeInsets.all(16),
+            child: uid == null
+                ? const Center(child: Text('Chưa đăng nhập', style: TextStyle(color: Colors.red)))
+                : StreamBuilder<DocumentSnapshot>(
+                    stream: FirebaseFirestore.instance.doc('users/$uid').snapshots(),
+                    builder: (context, snapshot) {
+                      final balance = snapshot.data?['balance'] as int? ?? 0;
+                      return Column(
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text(
+                                'ĐANG ĐẶT CƯỢC',
+                                style: TextStyle(
+                                  color: Colors.amber,
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Text(
+                                'Số dư: $balance',
+                                style: const TextStyle(
+                                  color: Colors.greenAccent,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          if (!_hasPlacedBet) ...[
+                            _buildCharacterSelector(),
+                            const SizedBox(height: 16),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Text('Cược: ', style: TextStyle(color: Colors.white70, fontSize: 16)),
+                                DropdownButton<int>(
+                                  value: _betAmount,
+                                  dropdownColor: Colors.grey[900],
+                                  style: const TextStyle(color: Colors.amber, fontSize: 16, fontWeight: FontWeight.bold),
+                                  items: [10, 50, 100, 200, 500].map((amount) {
+                                    return DropdownMenuItem<int>(
+                                      value: amount,
+                                      child: Text('$amount xu'),
+                                    );
+                                  }).toList(),
+                                  onChanged: (val) {
+                                    if (val != null) setState(() => _betAmount = val);
+                                  },
+                                ),
+                                const SizedBox(width: 24),
+                                if (_isLoading)
+                                  const CircularProgressIndicator(color: Colors.white)
+                                else
+                                  ElevatedButton(
+                                    onPressed: () => _placeBet(balance),
+                                    style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                                    child: const Text('XÁC NHẬN CƯỢC', style: TextStyle(color: Colors.white)),
+                                  ),
+                              ],
+                            ),
+                          ] else ...[
+                            const Text(
+                              'Đã đặt cược! Đang chờ cuộc đua bắt đầu...',
+                              style: TextStyle(color: Colors.greenAccent, fontSize: 16),
+                            ),
+                            const SizedBox(height: 16),
+                            if (_isLoading)
+                              const CircularProgressIndicator(color: Colors.white)
+                            else
+                              ElevatedButton.icon(
+                                onPressed: _runRace,
+                                icon: const Icon(Icons.flag),
+                                label: const Text('BẮT ĐẦU ĐUA!'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.red,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                                ),
+                              ),
+                          ],
+                          if (_errorMessage != null) ...[
+                            const SizedBox(height: 8),
+                            Text(_errorMessage!, style: const TextStyle(color: Colors.red)),
+                          ],
+                        ],
+                      );
+                    },
+                  ),
         ),
       ],
     );
@@ -385,11 +741,41 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   Widget _buildRaceTrack() {
+    if (_duckRaceGame == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
     return Padding(
-      padding: const EdgeInsets.all(16),
-      child: CustomPaint(
-        painter: DuckRacePainter(p1: _p1, p2: _p2, p3: _p3, p4: _p4, p5: _p5),
-        size: Size.infinite,
+      padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 0),
+      child: GameWidget(
+        game: _duckRaceGame!,
+        loadingBuilder: (ctx) => Container(
+          color: const Color(0xFF2B2D31),
+          child: const Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(color: Colors.amber),
+                SizedBox(height: 12),
+                Text('Đang tải đường đua...', style: TextStyle(color: Colors.white70)),
+              ],
+            ),
+          ),
+        ),
+        errorBuilder: (ctx, ex) => Container(
+          color: Colors.black,
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error, color: Colors.red, size: 48),
+              const SizedBox(height: 8),
+              const Text('Lỗi tải game:', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              SelectableText(ex.toString(), style: const TextStyle(color: Colors.white70, fontSize: 11)),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -430,98 +816,18 @@ class _GameScreenState extends State<GameScreen> {
   }
 }
 
-class DuckRacePainter extends CustomPainter {
-  final double p1, p2, p3, p4, p5;
+class DuckAvatar extends StatelessWidget {
+  final String assetPath;
 
-  DuckRacePainter({
-    required this.p1,
-    required this.p2,
-    required this.p3,
-    required this.p4,
-    required this.p5,
-  });
-
-  static const double _finishLineOffset = 40.0;
-  static const List<Color> _duckColors = [
-    Colors.yellow,
-    Colors.cyan,
-    Colors.pink,
-    Colors.green,
-    Colors.orange,
-  ];
+  const DuckAvatar({super.key, required this.assetPath});
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint();
-    final laneHeight = size.height / 5;
-    final trackWidth = size.width - _finishLineOffset;
-
-    paint.color = Colors.white24;
-    paint.strokeWidth = 1;
-    for (int i = 1; i < 5; i++) {
-      final y = i * laneHeight;
-      _drawDashedLine(canvas, Offset(0, y), Offset(size.width, y), paint);
-    }
-
-    paint.color = Colors.red;
-    paint.strokeWidth = 3;
-    canvas.drawLine(
-      Offset(size.width - _finishLineOffset, 0),
-      Offset(size.width - _finishLineOffset, size.height),
-      paint,
+  Widget build(BuildContext context) {
+    return FittedBox(
+      fit: BoxFit.fitHeight,
+      alignment: Alignment.centerLeft,
+      clipBehavior: Clip.hardEdge,
+      child: Image.asset(assetPath),
     );
-
-    final positions = [p1, p2, p3, p4, p5];
-    for (int i = 0; i < 5; i++) {
-      final laneCenterY = laneHeight * i + laneHeight / 2;
-      final clampedPos = positions[i].clamp(0.0, 100.0);
-      final xPixel = (clampedPos / 100.0) * trackWidth;
-
-      paint.color = _duckColors[i];
-      paint.style = PaintingStyle.fill;
-      canvas.drawCircle(Offset(xPixel, laneCenterY), 16, paint);
-
-      final textSpan = TextSpan(
-        text: '${i + 1}',
-        style: const TextStyle(
-          color: Colors.black87,
-          fontSize: 14,
-          fontWeight: FontWeight.bold,
-        ),
-      );
-      final textPainter = TextPainter(
-        text: textSpan,
-        textDirection: TextDirection.ltr,
-      );
-      textPainter.layout();
-      textPainter.paint(
-        canvas,
-        Offset(xPixel - textPainter.width / 2, laneCenterY - textPainter.height / 2),
-      );
-    }
   }
-
-  void _drawDashedLine(Canvas canvas, Offset a, Offset b, Paint paint) {
-    final dx = b.dx - a.dx;
-    final dy = b.dy - a.dy;
-    final totalDist = math.sqrt(dx * dx + dy * dy);
-    if (totalDist < 1) return;
-    final dirX = dx / totalDist;
-    final dirY = dy / totalDist;
-    const step = 8.0;
-    const dashLen = 4.0;
-    var t = 0.0;
-    while (t < totalDist) {
-      final endT = math.min(t + dashLen, totalDist);
-      canvas.drawLine(
-        Offset(a.dx + dirX * t, a.dy + dirY * t),
-        Offset(a.dx + dirX * endT, a.dy + dirY * endT),
-        paint,
-      );
-      t += step;
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant DuckRacePainter oldDelegate) => true;
 }

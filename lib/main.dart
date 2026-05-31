@@ -8,6 +8,7 @@ import 'features/auth/bloc/auth_bloc.dart';
 import 'features/auth/repository/auth_repository.dart';
 import 'features/home/home_screen.dart';
 import 'features/game/game_screen.dart';
+import 'features/showcase/showcase_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -37,6 +38,7 @@ class MyApp extends StatelessWidget {
             final raceId = args is String ? args : null;
             return GameScreen(raceId: raceId);
           },
+          '/showcase': (context) => const ShowcaseScreen(),
         },
       ),
     );
